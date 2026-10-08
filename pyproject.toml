@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "maximal-class-graph"
+version = "0.1.0"
+description = "Convert directed graphs to maximal-class families and enumerate graphs with a given family."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["networkx>=2.8"]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "numpy>=1.23"]
+
+[project.urls]
+Repository = "https://github.com/Bi-xuan/maximal_class_graph"
+"Original R algorithms" = "https://github.com/Bi-xuan/maximal_class"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+maximal_class_graph = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
