@@ -24,220 +24,145 @@ from maximal_class_graph import (
 
 The result container type is also available as `from maximal_class_graph import BitmaskGraphs`.
 
-## Definition
-
-Collapse each strongly connected component (SCC) into one vertex. In the
-resulting condensation DAG, each source SCC defines a class: its own vertices
-and every original vertex reachable from it. The complete family of these sets
-is the graph's maximal-class family. Classes can overlap.
-
-For example, edges `1 -> 3` and `2 -> 3` give `{1, 3}, {2, 3}`.
-Cycles are allowed. Self-loops do not change the family.
-
 ## `graph_to_maximal_class()`
 
 ```python
-from maximal_class_graph import graph_to_maximal_class
-
-family = graph_to_maximal_class([(1, 3), (2, 3)], input_format="edges")
-assert family == (frozenset({1, 3}), frozenset({2, 3}))
+graph_to_maximal_class(graph, *, input_format="edges", nodes=None)
 ```
 
-Specify `nodes` to include isolated vertices in edge input. When supplied, it
-must list all vertices, including all edge endpoints:
+### Input
+
+`graph` represents a labeled directed graph in the format selected by
+`input_format`:
+
+| `input_format` | Format of `graph` | Meaning of `nodes` |
+| --- | --- | --- |
+| `"edges"` (default) | An iterable of `(source, target)` pairs, such as `[(1, 3), (2, 3)]`. | Optional ordered vertex labels. Include every edge endpoint and any isolated vertices. If omitted, labels are inferred from the edges. |
+| `"matrix"` | A square binary adjacency matrix, as nested lists or a NumPy array. Entry `[i, j] == 1` means an edge from vertex `i` to vertex `j`; Boolean entries are accepted. | Optional labels in row/column order, one per row. Defaults to `0, ..., n-1`. |
+| `"bitmask"` | A nonnegative integer encoding non-loop edges as described below. | Required ordered vertex labels, defining the vertex count and bit positions. |
+
+Explicit `nodes` must contain distinct hashable labels, excluding `None`.
+Repeated edges and self-loops do not affect the result. Nested-list matrix
+input does not require NumPy.
+
+A **bitmask** uses one bit per possible non-loop edge, in row-major order,
+starting at bit 0 and skipping the diagonal. For `n` ordered vertices, the
+edge from index `i` to index `j` (`i != j`) occupies bit
+`i * (n - 1) + j - int(j > i)`. Valid masks satisfy
+`0 <= mask < 2**(n * (n - 1))`; booleans are not accepted as masks.
+For `nodes=(1, 2, 3)`, bits 0 through 5 represent
+`1 -> 2`, `1 -> 3`, `2 -> 1`, `2 -> 3`, `3 -> 1`, `3 -> 2`.
+Thus mask `10` encodes `1 -> 3` and `2 -> 3`.
+
+### Output
+
+A `tuple` of `frozenset` objects containing the **complete maximal-class
+family**. Collapse each strongly connected component into one vertex. Each
+source component (a component with no incoming edges from other components)
+defines one class consisting of its vertices and all vertices reachable from
+it. Classes can overlap.
+
+Class ordering follows the supplied vertex order. Inferred edge labels are
+sorted when comparable; otherwise their first appearance determines the
+order. An empty graph with no vertices returns `()`.
 
 ```python
-assert graph_to_maximal_class([(1, 2)], nodes=[1, 2, 3]) == (
-    frozenset({1, 2}), frozenset({3}),
-)
+family = graph_to_maximal_class([(1, 3), (2, 3)])
+# (frozenset({1, 3}), frozenset({2, 3}))
+
+family = graph_to_maximal_class(10, input_format="bitmask", nodes=[1, 2, 3])
+# The same family.
 ```
-
-For matrix input, `[i, j] == 1` denotes `i -> j`. Matrices must be square and
-binary; Boolean values are accepted. Nested lists require no NumPy. Labels
-default to `0, ..., n-1`, or follow `nodes` in row/column order:
-
-```python
-matrix = [[1, 0, 1], [0, 1, 1], [0, 0, 1]]
-assert graph_to_maximal_class(matrix, input_format="matrix", nodes=[1, 2, 3]) == family
-```
-
-Integer masks can be passed directly, with the vertex order specified:
-
-```python
-assert graph_to_maximal_class(10, input_format="bitmask", nodes=[1, 2, 3]) == family
-```
-
-Labels can be any hashable objects except `None`. Repeated edge pairs and
-self-loops do not affect the family. Inputs are not modified. Class ordering
-follows supplied node order; otherwise inferred comparable labels are sorted,
-with first appearance used for labels that cannot be sorted. Compare families
-without ordering using `frozenset(family)`.
-
-## Bitmask encoding
-
-A graph is one nonnegative Python integer. Bits enumerate **all** possible
-non-loop edges in row-major order, starting at the least significant bit.
-The encoding is independent of the maximal-class family and its allowed edges.
-For `nodes = (1, 2, 3)`:
-
-| Bit position | Edge |
-| --- | --- |
-| 0 | `1 -> 2` |
-| 1 | `1 -> 3` |
-| 2 | `2 -> 1` |
-| 3 | `2 -> 3` |
-| 4 | `3 -> 1` |
-| 5 | `3 -> 2` |
-
-Thus `10 == (1 << 1) | (1 << 3)` encodes `1 -> 3` and `2 -> 3`.
-For indexed vertices `i != j`, the bit position is
-`i * (n - 1) + j - (j > i)`.
-
-The ordered vertex labels must be retained alongside the masks; the integer
-alone does not specify labels, isolated vertices, or even the vertex count.
-At 10 vertices a mask needs at most 90 bits. Self-loops at every vertex are
-implicit and always restored during conversion. Zero denotes a graph with no
-non-loop edges. It describes different graphs for different vertex metadata.
 
 ## `list_graphs_in_maximal_class()`
 
 ```python
-from maximal_class_graph import list_graphs_in_maximal_class
-
-results = list_graphs_in_maximal_class([{1, 3}, {2, 3}])
-assert results.nodes == (1, 2, 3)
-assert results.masks == [10]
-```
-
-The input is the **entire family**. Its union defines the vertex set. The return
-value is a `BitmaskGraphs` container holding shared `nodes` and integer `masks`.
-By default `masks` is the complete list of matching graphs. Each distinct
-labeled non-loop edge set appears once. Isomorphic graphs with different
-labeled edges remain distinct. No matrices or DiGraph objects are created.
-
-For a one-pass mask iterator:
-
-```python
-results = list_graphs_in_maximal_class([{1, 2, 3}], as_iterator=True)
-for mask in results.masks:
-    assert isinstance(mask, int)
-```
-
-Family validation and the candidate-search limit are checked immediately in
-both modes. An iterator is consumed as it is used; stopping early gives only
-the masks consumed so far.
-
-An edge `u -> v` is allowed only if every input class containing `u` also
-contains `v`. With `p` allowed edges, there are at most `2**p` candidates before
-pruning. The default `max_candidates=32768` matches the original R algorithm's
-limit of 15 possible non-loop edges. Raise this positive integer explicitly,
-or use `None` to disable the guard. Exceeding it raises `ValueError`; streaming
-does not remove the search limit.
-
-```python
-results = list_graphs_in_maximal_class(
-    [{0, 1, 2, 3}], max_candidates=4096, as_iterator=True,
+list_graphs_in_maximal_class(
+    maximal_class, *, max_candidates=32768, as_iterator=False,
 )
 ```
 
-Compact storage does not eliminate exponential output size. With 10 vertices
-and one class containing them all, fixing a directed cycle still leaves 80
-optional edges, giving at least `2**80` valid outputs. In contrast, ten singleton
-classes give just one mask: zero, with ten implicit self-loops.
+### Input
+
+- `maximal_class`: an iterable of iterables of vertex labels, such as
+  `[{1, 3}, {2, 3}]`. Supply the **entire family** defined above; its union is
+  the vertex set. Labels must be hashable and cannot be `None`. Classes must
+  be nonempty and distinct, and each class must contain at least one vertex
+  belonging to no other class. Use `()` for the zero-vertex graph's family.
+- `max_candidates`: a positive integer or `None`. Limits the candidate count
+  `2**p` before pruning, where `p` is the number of allowed non-loop edges.
+  An edge `u -> v` is allowed when every input class containing `u` also
+  contains `v`. The default is `32768`; `None` disables the limit. Exceeding
+  the limit raises `ValueError`, including in iterator mode.
+- `as_iterator`: a Boolean, default `False`, selecting whether the output
+  masks are stored in a list or yielded by a one-pass iterator.
+
+### Output
+
+A `BitmaskGraphs` container with two attributes:
+
+| Attribute | Format and meaning |
+| --- | --- |
+| `nodes` | A tuple of all vertex labels, sorted when comparable; otherwise in first-appearance order in the input. This order defines the bit positions. |
+| `masks` | A `list[int]` by default, or a one-pass iterator of integers when `as_iterator=True`. Each mask represents one graph whose complete maximal-class family equals the input, using the encoding above. |
+
+Each distinct labeled non-loop edge set appears once. Self-loops at every
+vertex are implicit. No matrices or NetworkX objects are returned. The empty
+family returns `nodes=()` and `masks=[0]` in list mode.
+
+```python
+results = list_graphs_in_maximal_class([{1, 3}, {2, 3}])
+# BitmaskGraphs(nodes=(1, 2, 3), masks=[10])
+```
 
 ## `convert_bitmask_graphs()`
 
-Convert a complete result or a chosen subset separately from enumeration:
+```python
+convert_bitmask_graphs(
+    masks, *, nodes=None, output_format="matrix", max_graphs=1000,
+    as_iterator=False,
+)
+```
+
+### Input
+
+- `masks`: a `BitmaskGraphs` container, or an iterable of integer graph masks
+  using the encoding above. Wrap a single mask in a list, such as `[10]`.
+- `nodes`: required for raw mask iterables, in the exact order used to encode
+  the masks. Labels must be distinct and hashable, excluding `None`. Omit
+  this argument when passing a `BitmaskGraphs` container, which supplies its
+  own labels.
+- `output_format`: `"matrix"` (default, requires NumPy) or `"digraph"`
+  (requires NetworkX).
+- `max_graphs`: a positive integer or `None`, default `1000`. Caps the number
+  of graphs converted in list mode; exceeding it raises `ValueError` before
+  output objects are allocated. With an unknown-length mask iterator, the
+  check consumes up to `max_graphs + 1` masks. `None` disables the cap.
+- `as_iterator`: a Boolean, default `False`. If `True`, returns a one-pass
+  iterator that converts one graph at a time, without a cumulative
+  graph-count cap.
+
+### Output
+
+A list by default, or a one-pass iterator when `as_iterator=True`, preserving
+input mask order. Each element is an independent graph representation:
+
+| `output_format` | Format and meaning of each element |
+| --- | --- |
+| `"matrix"` | A NumPy Boolean array of shape `(n, n)`, with rows and columns in `nodes` order. Entry `[i, j]` is `True` exactly when the graph contains the edge from `nodes[i]` to `nodes[j]`. Every diagonal entry is `True`. |
+| `"digraph"` | A NetworkX `DiGraph` preserving all vertex labels, including isolated vertices, and containing a self-loop at every vertex. |
+
+For the zero-vertex mask, conversion produces a `(0, 0)` matrix or an empty
+`DiGraph`. Missing conversion dependencies raise `ImportError`.
 
 ```python
-from maximal_class_graph import convert_bitmask_graphs
+matrices = convert_bitmask_graphs([10], nodes=[1, 2, 3])
+# matrices[0].tolist() == [
+#     [True, False, True],
+#     [False, True, True],
+#     [False, False, True],
+# ]
 
-results = list_graphs_in_maximal_class([{1, 3}, {2, 3}])
-
-# NumPy Boolean matrices, with rows/columns in results.nodes order.
-matrices = convert_bitmask_graphs(results)
-assert matrices[0].tolist() == [
-    [True, False, True], [False, True, True], [False, False, True],
-]
-
-# NetworkX objects preserving the labels, including every self-loop.
 graphs = convert_bitmask_graphs(results, output_format="digraph")
-assert set(graphs[0].edges) == {(1, 1), (2, 2), (3, 3), (1, 3), (2, 3)}
-
-# Convert a subset, or one mask wrapped in a list.
-selected = convert_bitmask_graphs(results.masks[:100], nodes=results.nodes)
-one = convert_bitmask_graphs([results.masks[0]], nodes=results.nodes)
+# set(graphs[0].edges) == {(1, 1), (2, 2), (3, 3), (1, 3), (2, 3)}
 ```
-
-Output objects are independent. `output_format` is `"matrix"` (default) or
-`"digraph"`. Passing a `BitmaskGraphs` container supplies its own labels;
-passing raw masks requires `nodes` in the exact encoding order. Do not supply
-`nodes` again alongside a container. Even a single mask is passed in an iterable.
-
-### Conversion storage limit
-
-Eager conversion defaults to **at most 1,000 graphs** (`max_graphs=1000`). If
-exceeded, a `ValueError` explains the storage concern before any matrix or
-DiGraph is allocated. This is a graph-count cap, not an exact byte budget;
-object sizes also depend on vertex count and density.
-
-For unknown-length mask iterators, the guard consumes at most `max_graphs + 1`
-masks. These cannot be put back if the cap is exceeded. To avoid consuming a
-large stream accidentally, select a bounded part explicitly with `islice`.
-
-```python
-from itertools import islice
-
-results = list_graphs_in_maximal_class([{1, 2, 3}], as_iterator=True)
-first_ten = convert_bitmask_graphs(islice(results.masks, 10), nodes=results.nodes)
-
-# Raise the cap explicitly, or use max_graphs=None to disable it.
-remaining = convert_bitmask_graphs(results, max_graphs=2000)
-```
-
-For conversion without accumulating all outputs:
-
-```python
-results = list_graphs_in_maximal_class([{1, 2, 3}], as_iterator=True)
-for graph in convert_bitmask_graphs(results, output_format="digraph", as_iterator=True):
-    assert all(graph.has_edge(node, node) for node in graph)
-```
-
-Streaming conversion has no cumulative graph-count cap: it allocates one
-output per iteration. Accumulating the outputs yourself still uses storage.
-Options, labels, and dependency availability are checked at call time. All
-eager masks are checked before allocating outputs; streamed masks are checked
-as consumed. Negative, boolean, noninteger, or out-of-range masks raise
-`ValueError`. Missing conversion dependencies raise an informative `ImportError`.
-
-## Validation and empty graphs
-
-Input classes must be nonempty and distinct. Each must contain a vertex
-belonging to no other class; otherwise the family is not realizable and raises
-`ValueError`. This condition is sufficient as well: select one exclusive vertex
-per class and connect it to every other member of that class.
-
-The zero-vertex graph has family `()`. Enumerating it returns
-`BitmaskGraphs(nodes=(), masks=[0])`; conversion gives a `(0, 0)` matrix or an
-empty DiGraph. A one-vertex graph also has mask zero, but has one implicit loop.
-
-## Changes in version 0.2
-
-Enumeration now returns `BitmaskGraphs`, rather than a list or iterator of
-NetworkX graphs. Read `results.masks` for the compact results, or call
-`convert_bitmask_graphs(results, output_format="digraph")` for the former output
-objects. NetworkX and NumPy are optional conversion dependencies. The forward
-function retains its edge/matrix inputs and adds direct bitmask input.
-
-## Implementation and verification
-
-Reachability uses bitset transitive closure. Inclusion-maximal reachable sets
-give the source-SCC maximal classes. Reverse enumeration holds only integer
-graph masks, prunes branches that cannot provide required reachability, and
-checks exact families before yielding a mask.
-
-Tests exhaustively compare both algorithms against an independent DFS oracle
-for **all 4,166 directed graphs on zero through four vertices**, and verify the
-converted edges and matrices. Additional tests cover fixed bit positions up to
-10 vertices, graphs with masks beyond 64 bits, larger examples against NetworkX
-SCCs, dependency-free calculations, conversion limits, streaming, and validation.
