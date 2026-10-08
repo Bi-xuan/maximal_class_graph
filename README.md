@@ -1,34 +1,28 @@
 # maximal_class_graph
 
-Convert a labeled directed graph into its complete maximal-class family and
-enumerate all graphs having exactly that family. Both calculations use integer
-bitmasks throughout. Graphs are stored compactly, with optional conversion to
-NumPy Boolean matrices or NetworkX `DiGraph` objects.
+## Installation and imports
 
-Adapted from the [original R algorithms](https://github.com/Bi-xuan/maximal_class).
-
-## Installation
-
-Python 3.9 or newer is required. The calculations have no third-party dependencies:
+Requires Python 3.9 or newer. Install the package directly from GitHub:
 
 ```sh
-python -m pip install .
+python -m pip install git+https://github.com/Bi-xuan/maximal_class_graph.git
 ```
 
-Install optional dependencies for matrix and/or DiGraph conversion:
+Import the three public functions:
 
-```sh
-python -m pip install '.[matrix]'          # NumPy
-python -m pip install '.[digraph]'         # NetworkX
-python -m pip install '.[matrix,digraph]'  # Both
+```python
+from maximal_class_graph import (
+    graph_to_maximal_class,
+    list_graphs_in_maximal_class,
+    convert_bitmask_graphs,
+)
 ```
 
-For development and tests:
+- `graph_to_maximal_class`: compute a directed graph's maximal-class family.
+- `list_graphs_in_maximal_class`: enumerate graphs with a given maximal-class family.
+- `convert_bitmask_graphs`: convert graph bitmasks to NumPy matrices or NetworkX graphs.
 
-```sh
-python -m pip install -e '.[test]'
-python -m pytest
-```
+The result container type is also available as `from maximal_class_graph import BitmaskGraphs`.
 
 ## Definition
 
