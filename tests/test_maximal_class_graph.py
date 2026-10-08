@@ -7,7 +7,12 @@ import networkx as nx
 import numpy as np
 import pytest
 
-from maximal_class_graph import graph_to_maximal_class, list_graphs_in_maximal_class
+from maximal_class_graph import (
+    BitmaskGraphs,
+    convert_bitmask_graphs,
+    graph_to_maximal_class,
+    list_graphs_in_maximal_class,
+)
 
 
 def family_key(family):
@@ -53,15 +58,25 @@ def test_exhaustive_forward_and_reverse_through_four_vertices(size):
     for bits in product((False, True), repeat=len(possible)):
         edges = frozenset(edge for edge, present in zip(possible, bits) if present)
         family = oracle_family(nodes, edges)
-        expected[family].add(edges)
+        mask = sum(1 << k for k, present in enumerate(bits) if present)
+        expected[family].add(mask)
         assert family_key(graph_to_maximal_class(edges, nodes=nodes)) == family
-    for family, edge_sets in expected.items():
+        assert family_key(graph_to_maximal_class(mask, input_format="bitmask", nodes=nodes)) == family
+    for family, masks in expected.items():
         generated = list_graphs_in_maximal_class(family)
-        actual = [nonloop_edges(graph) for graph in generated]
-        assert len(actual) == len(set(actual)), "Duplicate graph returned"
-        assert set(actual) == edge_sets
-        for graph in generated:
+        assert isinstance(generated, BitmaskGraphs)
+        assert generated.nodes == tuple(nodes)
+        assert isinstance(generated.masks, list)
+        assert len(generated.masks) == len(set(generated.masks)), "Duplicate graph returned"
+        assert set(generated.masks) == masks
+        graphs = convert_bitmask_graphs(generated, output_format="digraph", as_iterator=True)
+        matrices = convert_bitmask_graphs(generated, output_format="matrix", as_iterator=True)
+        for mask, graph, matrix in zip(generated.masks, graphs, matrices):
             assert_loops_and_family(graph, family, nodes)
+            expected_edges = frozenset(edge for k, edge in enumerate(possible) if mask & (1 << k))
+            assert nonloop_edges(graph) == expected_edges
+            assert np.array_equal(matrix, nx.to_numpy_array(graph, nodelist=nodes, dtype=bool))
+            assert family_key(graph_to_maximal_class(matrix, input_format="matrix")) == family
 
 
 def test_r_example_and_overlapping_classes():
@@ -106,29 +121,31 @@ def test_empty_inputs():
     assert graph_to_maximal_class([], input_format="matrix") == ()
     assert graph_to_maximal_class(np.empty((0, 0)), input_format="matrix") == ()
     result = list_graphs_in_maximal_class(())
-    assert len(result) == 1
-    assert len(result[0]) == 0
-    assert result[0].number_of_edges() == 0
+    assert result.nodes == ()
+    assert result.masks == [0]
+    graph = convert_bitmask_graphs(result, output_format="digraph")[0]
+    assert len(graph) == graph.number_of_edges() == 0
+    assert convert_bitmask_graphs(result)[0].shape == (0, 0)
 
 
-def test_iterator_matches_list_and_yields_independent_graphs():
+def test_iterator_matches_list_and_yields_only_integer_masks():
     family = [{1, 2, 3}]
     result = list_graphs_in_maximal_class(family)
     stream = list_graphs_in_maximal_class(family, as_iterator=True)
-    assert iter(stream) is stream
-    streamed = list(stream)
-    assert [set(g.edges) for g in streamed] == [set(g.edges) for g in result]
-    assert len({id(g) for g in streamed}) == len(streamed)
-    streamed[0].clear()
-    assert len(streamed[1]) == 3
+    assert stream.nodes == result.nodes == (1, 2, 3)
+    assert iter(stream.masks) is stream.masks
+    assert list(stream.masks) == result.masks
+    assert all(type(mask) is int for mask in result.masks)
+    assert list(stream.masks) == []
 
 
 def test_class_and_member_order_do_not_change_graphs():
     a = list_graphs_in_maximal_class([[1, 3], [2, 3]])
     b = list_graphs_in_maximal_class([[3, 2], [3, 1]])
-    assert [set(g.edges) for g in a] == [set(g.edges) for g in b]
-    assert len(a) == 1
-    assert set(a[0].edges) == {(1, 1), (2, 2), (3, 3), (1, 3), (2, 3)}
+    assert a.nodes == b.nodes == (1, 2, 3)
+    assert a.masks == b.masks == [10]  # Bits 1 and 3, not family-local indices.
+    graph = convert_bitmask_graphs(a, output_format="digraph")[0]
+    assert set(graph.edges) == {(1, 1), (2, 2), (3, 3), (1, 3), (2, 3)}
 
 
 def test_mixed_hashable_labels_and_generators():
@@ -136,15 +153,18 @@ def test_mixed_hashable_labels_and_generators():
     edges = [("root", 7), (7, ("sink", 1))]
     family = graph_to_maximal_class((edge for edge in edges), nodes=iter(nodes))
     assert family_key(family) == family_key([nodes[:3], ["isolated"]])
-    for graph in list_graphs_in_maximal_class((iter(group) for group in family)):
+    result = list_graphs_in_maximal_class((iter(group) for group in family))
+    for graph in convert_bitmask_graphs(result, output_format="digraph"):
         assert_loops_and_family(graph, family, nodes)
 
 
 def test_ten_vertex_sparse_family_is_enumerable():
     family = [{i} for i in range(10)]
     graphs = list_graphs_in_maximal_class(family)
-    assert len(graphs) == 1
-    assert_loops_and_family(graphs[0], family, range(10))
+    assert graphs.nodes == tuple(range(10))
+    assert graphs.masks == [0]
+    graph = convert_bitmask_graphs(graphs, output_format="digraph")[0]
+    assert_loops_and_family(graph, family, range(10))
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -153,8 +173,8 @@ def test_search_limit_is_checked_immediately(stream):
         list_graphs_in_maximal_class([range(10)], as_iterator=stream)
     with pytest.raises(ValueError, match="64 candidates"):
         list_graphs_in_maximal_class([range(3)], max_candidates=63, as_iterator=stream)
-    assert len(list_graphs_in_maximal_class([range(3)], max_candidates=64)) > 0
-    assert len(list_graphs_in_maximal_class([range(3)], max_candidates=None)) > 0
+    assert len(list_graphs_in_maximal_class([range(3)], max_candidates=64).masks) > 0
+    assert len(list_graphs_in_maximal_class([range(3)], max_candidates=None).masks) > 0
 
 
 @pytest.mark.parametrize("limit", [0, -1, 1.5, "64", True])
